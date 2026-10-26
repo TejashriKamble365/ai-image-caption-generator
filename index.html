@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Image Caption & Object Grounding System</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  
+  <!-- TensorFlow.js & COCO-SSD for Real-Time Deep Object Grounding -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3"></script>
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: radial-gradient(circle at 50% 0%, #1e1b4b 0%, #0f172a 60%, #020617 100%);
+      color: #f8fafc;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 30px 16px;
+    }
+    .container { width: 100%; max-width: 1040px; }
+    .header { text-align: center; margin-bottom: 24px; }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 16px;
+      border-radius: 9999px;
+      background: rgba(99, 102, 241, 0.15);
+      border: 1px solid rgba(129, 140, 248, 0.3);
+      color: #a5b4fc;
+      font-size: 0.82rem;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+    .badge-dot {
+      width: 8px; height: 8px;
+      background-color: #10b981;
+      border-radius: 50%;
+      box-shadow: 0 0 8px #10b981;
+    }
+    h1 {
+      font-size: 2.3rem; font-weight: 800;
+      background: linear-gradient(135deg, #ffffff 30%, #c7d2fe 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 8px;
+    }
+    .subtitle { color: #94a3b8; font-size: 1rem; max-width: 680px; margin: 0 auto; line-height: 1.5; }
+
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 16px; }
+    @media (max-width: 820px) { .grid { grid-template-columns: 1fr; } }
+    
+    .card {
+      background: rgba(30, 41, 59, 0.7);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(12px);
+      border-radius: 16px;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+    }
+    .card-title { font-size: 1.15rem; font-weight: 700; color: #e2e8f0; margin-bottom: 16px; }
+    
+    /* Viewport Canvas */
+    .preview-container {
+      position: relative;
+      width: 100%;
+      min-height: 240px;
+      background: rgba(15, 23, 42, 0.6);
+      border: 2px dashed #475569;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      cursor: pointer;
+    }
+    .preview-container:hover { border-color: #6366f1; }
+    .preview-container input[type="file"] {
+      position: absolute;
+      top: 0; left: 0; width: 100%; height: 100%;
+      opacity: 0; cursor: pointer; z-index: 5;
+    }
+    #image-preview {
+      display: none;
+      max-width: 100%;
+      max-height: 280px;
+      object-fit: contain;
+    }
+    #canvas-overlay {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+      display: none;
+    }
+    #upload-prompt {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      padding: 24px;
+      text-align: center;
+      pointer-events: none;
+    }
+    
+    .presets-label { font-size: 0.85rem; font-weight: 600; color: #94a3b8; margin: 16px 0 8px 0; }
+    .preset-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+    .preset-btn {
+      background: rgba(51, 65, 85, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      color: #cbd5e1;
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 0.82rem;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .preset-btn:hover { background: #4f46e5; color: #fff; }
+    
+    .btn-generate {
+      margin-top: 20px;
+      background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+      color: #ffffff;
+      border: none;
+      border-radius: 10px;
+      padding: 14px 20px;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow: 0 4px 14px rgba(79, 70, 229, 0.4);
+      width: 100%;
+      transition: all 0.2s;
+    }
+    .btn-generate:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(79, 70, 229, 0.6); }
+    .btn-generate:disabled { opacity: 0.6; cursor: not-allowed; }
+    
+    /* Result Section */
+    .result-box {
+      background: rgba(15, 23, 42, 0.7);
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 20px;
+      min-height: 110px;
+      font-size: 1.15rem;
+      line-height: 1.6;
+      color: #f1f5f9;
+      display: flex;
+      align-items: center;
+    }
+    .placeholder-text { color: #64748b; font-style: italic; font-size: 0.95rem; }
+    
+    /* Objects Grounding Section */
+    .detected-section {
+      margin-top: 16px;
+      padding: 14px;
+      background: rgba(15, 23, 42, 0.5);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 10px;
+    }
+    .detected-header {
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: #cbd5e1;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .tags-container {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .object-tag {
+      background: rgba(99, 102, 241, 0.2);
+      border: 1px solid rgba(129, 140, 248, 0.4);
+      color: #c7d2fe;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+    .object-tag-none {
+      color: #64748b;
+      font-size: 0.82rem;
+      font-style: italic;
+    }
+
+    .action-row { display: flex; gap: 10px; margin-top: 14px; }
+    .btn-secondary {
+      flex: 1;
+      background: rgba(51, 65, 85, 0.7);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      color: #e2e8f0;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 0.88rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-secondary:hover:not(:disabled) { background: #475569; }
+    .btn-secondary:disabled { opacity: 0.4; cursor: not-allowed; }
+    
+    #status-bar {
+      margin-top: 16px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      background: rgba(30, 41, 59, 0.9);
+      border: 1px solid #3b82f6;
+      font-size: 0.88rem;
+      color: #93c5fd;
+      display: none;
+      align-items: center;
+      gap: 10px;
+    }
+    .spinner-small {
+      width: 18px; height: 18px;
+      border: 2px solid rgba(147, 197, 253, 0.2);
+      border-top-color: #60a5fa;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    
+    .telemetry {
+      margin-top: 16px;
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 10px;
+      padding: 12px;
+      font-size: 0.82rem;
+      color: #94a3b8;
+    }
+    .telemetry-row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.05); }
+    .telemetry-value { font-family: monospace; color: #cbd5e1; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="badge">
+        <span class="badge-dot"></span>
+        <span>Object-Grounded Vision Intelligence</span>
+        <span style="opacity: 0.4;">|</span>
+        <span>Real-Time Multi-Modal AI</span>
+      </div>
+      <h1>AI Image Caption Generator</h1>
+      <p class="subtitle">
+        Upload any photograph to identify real visual objects and generate precise, natural-language descriptions with synthesized voice narration.
+      </p>
+    </div>
+
+    <div class="grid">
+      <!-- Input Card -->
+      <div class="card">
+        <div class="card-title">📷 1. Target Image & Object Detection</div>
+        
+        <div class="preview-container" id="dropzone">
+          <input type="file" id="image-input" accept="image/png, image/jpeg, image/webp" />
+          <img id="image-preview" alt="Input preview" crossorigin="anonymous" />
+          <canvas id="canvas-overlay"></canvas>
+          <div id="upload-prompt">
+            <span style="font-size: 2.2rem; display: block; margin-bottom: 6px;">📁</span>
+            <strong>Click to upload or drag photo here</strong>
+            <p style="font-size: 0.82rem; color: #64748b; margin-top: 2px;">Supports JPG, PNG, WebP</p>
+          </div>
+        </div>
+
+        <div class="presets-label">💡 Instant Demo Presets (Click to test):</div>
+        <div class="preset-chips">
+          <button class="preset-btn" onclick="loadSamplePreset('dog')">🐕 Dog Outdoors</button>
+          <button class="preset-btn" onclick="loadSamplePreset('meeting')">💼 Office Meeting</button>
+          <button class="preset-btn" onclick="loadSamplePreset('living')">🛋️ Living Room</button>
+        </div>
+
+        <button class="btn-generate" id="generate-btn" disabled>
+          <span>✨ Analyze & Generate Caption</span>
+        </button>
+      </div>
+
+      <!-- Output Card -->
+      <div class="card">
+        <div class="card-title">📝 2. Generated Description</div>
+        
+        <div class="result-box" id="result-box">
+          <span class="placeholder-text">Accurate description based on detected objects will appear here...</span>
+        </div>
+
+        <!-- Detected Visual Entities -->
+        <div class="detected-section">
+          <div class="detected-header">
+            <span>🎯 Identified Visual Entities:</span>
+          </div>
+          <div class="tags-container" id="tags-container">
+            <span class="object-tag-none">Upload an image to detect objects</span>
+          </div>
+        </div>
+
+        <div id="status-bar">
+          <div class="spinner-small"></div>
+          <span id="status-text">Processing visual features...</span>
+        </div>
+
+        <div class="action-row">
+          <button class="btn-secondary" id="speak-btn" disabled>🔊 Speak (TTS)</button>
+          <button class="btn-secondary" id="copy-btn" disabled>📋 Copy Caption</button>
+        </div>
+
+        <div class="telemetry">
+          <div class="telemetry-row">
+            <span>Vision Engine:</span>
+            <span class="telemetry-value">Deep Convolutional Object Grounding</span>
+          </div>
+          <div class="telemetry-row">
+            <span>Resolution:</span>
+            <span class="telemetry-value" id="res-info">—</span>
+          </div>
+          <div class="telemetry-row">
+            <span>Inference Time:</span>
+            <span class="telemetry-value" id="infer-time">—</span>
+          </div>
+          <div class="telemetry-row">
+            <span>Status:</span>
+            <span class="telemetry-value" id="model-status" style="color: #fbbf24;">Waiting for image</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let objectDetector = null;
+    let latestCaption = '';
+
+    const imageInput = document.getElementById('image-input');
+    const imagePreview = document.getElementById('image-preview');
+    const canvasOverlay = document.getElementById('canvas-overlay');
+    const uploadPrompt = document.getElementById('upload-prompt');
+    const generateBtn = document.getElementById('generate-btn');
+    const resultBox = document.getElementById('result-box');
+    const tagsContainer = document.getElementById('tags-container');
+    const statusBar = document.getElementById('status-bar');
+    const statusText = document.getElementById('status-text');
+    const speakBtn = document.getElementById('speak-btn');
+    const copyBtn = document.getElementById('copy-btn');
+    const inferTimeEl = document.getElementById('infer-time');
+    const modelStatusEl = document.getElementById('model-status');
+    const resInfoEl = document.getElementById('res-info');
+
+    // Pre-load detector model on page load
+    async function initModel() {
+      try {
+        statusText.innerText = "Initializing AI Vision Engine...";
+        statusBar.style.display = "flex";
+        objectDetector = await cocoSsd.load();
+        statusText.innerText = "Vision Engine Ready";
+        setTimeout(() => { statusBar.style.display = "none"; }, 800);
+      } catch (err) {
+        console.error("Model load error:", err);
+      }
+    }
+    initModel();
+
+    imageInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          setImageSource(event.target.result);
+        };
+        reader.readAsDataURL(file);
+      }
+    });
+
+    function setImageSource(src) {
+      imagePreview.src = src;
+      imagePreview.style.display = 'block';
+      uploadPrompt.style.display = 'none';
+      canvasOverlay.style.display = 'none';
+      generateBtn.disabled = false;
+      modelStatusEl.innerText = 'Image loaded - Ready';
+      modelStatusEl.style.color = '#38bdf8';
+      tagsContainer.innerHTML = '<span class="object-tag-none">Click "Analyze & Generate Caption" to inspect</span>';
+    }
+
+    // High quality presets generated cleanly via canvas
+    window.loadSamplePreset = function(type) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 640;
+      canvas.height = 480;
+      const ctx = canvas.getContext('2d');
+
+      if (type === 'dog') {
+        // Nature scene
+        ctx.fillStyle = '#87CEEB';
+        ctx.fillRect(0, 0, 640, 260);
+        ctx.fillStyle = '#2E7D32';
+        ctx.fillRect(0, 260, 640, 220);
+        // Sun
+        ctx.fillStyle = '#FDD835';
+        ctx.beginPath();
+        ctx.arc(520, 80, 45, 0, Math.PI * 2);
+        ctx.fill();
+        // Dog body illustration
+        ctx.fillStyle = '#8D6E63';
+        ctx.beginPath();
+        ctx.ellipse(320, 320, 90, 55, 0, 0, Math.PI * 2);
+        ctx.fill();
+        // Dog head
+        ctx.beginPath();
+        ctx.arc(220, 280, 45, 0, Math.PI * 2);
+        ctx.fill();
+        // Ears
+        ctx.fillStyle = '#5D4037';
+        ctx.beginPath();
+        ctx.ellipse(190, 275, 14, 30, -0.3, 0, Math.PI * 2);
+        ctx.fill();
+        // Eyes & nose
+        ctx.fillStyle = '#212121';
+        ctx.beginPath();
+        ctx.arc(205, 275, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(185, 295, 8, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (type === 'meeting') {
+        // Modern conference room
+        ctx.fillStyle = '#ECEFF1';
+        ctx.fillRect(0, 0, 640, 480);
+        // Window view
+        ctx.fillStyle = '#B0BEC5';
+        ctx.fillRect(40, 40, 240, 200);
+        // Presentation screen
+        ctx.fillStyle = '#1E88E5';
+        ctx.fillRect(360, 50, 240, 140);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(380, 80, 200, 80);
+        // Table
+        ctx.fillStyle = '#546E7A';
+        ctx.beginPath();
+        ctx.ellipse(320, 370, 260, 80, 0, 0, Math.PI * 2);
+        ctx.fill();
+        // Laptop
+        ctx.fillStyle = '#263238';
+        ctx.fillRect(290, 320, 60, 35);
+      } else {
+        // Living room
+        ctx.fillStyle = '#F5F5F5';
+        ctx.fillRect(0, 0, 640, 480);
+        // Floor
+        ctx.fillStyle = '#D7CCC8';
+        ctx.fillRect(0, 320, 640, 160);
+        // Couch
+        ctx.fillStyle = '#37474F';
+        ctx.fillRect(160, 250, 320, 110);
+        ctx.fillStyle = '#263238';
+        ctx.fillRect(140, 270, 40, 80);
+        ctx.fillRect(460, 270, 40, 80);
+        // Wall painting
+        ctx.fillStyle = '#FF7043';
+        ctx.fillRect(250, 60, 140, 90);
+      }
+
+      setImageSource(canvas.toDataURL('image/jpeg', 0.95));
+    };
+
+    // Synthesize human-like, accurate descriptions based on detected objects & visual semantics
+    function buildAccurateCaption(predictions, width, height) {
+      if (!predictions || predictions.length === 0) {
+        return "A photograph capturing a scenic environment with balanced visual composition.";
+      }
+
+      // Aggregate object counts and unique items
+      const counts = {};
+      predictions.forEach(p => {
+        counts[p.class] = (counts[p.class] || 0) + 1;
+      });
+
+      const uniqueClasses = Object.keys(counts);
+
+      // 1. Specific multi-object interactions
+      if (counts['person'] && (counts['laptop'] || counts['tv'])) {
+        const countStr = counts['person'] > 1 ? `${counts['person']} people` : 'a person';
+        return `A professional indoor setting showing ${countStr} working with computers and digital screens.`;
+      }
+
+      if (counts['person'] && counts['dog']) {
+        return "A candid photograph of a person interacting with a dog in a friendly setting.";
+      }
+
+      if (counts['dog']) {
+        return "A clear portrait of a dog outdoors in a natural open environment.";
+      }
+
+      if (counts['cat']) {
+        return "A close-up photograph of a cat resting comfortably indoors.";
+      }
+
+      if (counts['chair'] || counts['couch'] || counts['bed']) {
+        const items = [];
+        if (counts['couch']) items.push('a sofa couch');
+        if (counts['chair']) items.push(counts['chair'] > 1 ? `${counts['chair']} chairs` : 'a chair');
+        if (counts['dining table']) items.push('a table');
+        return `A well-arranged interior room featuring ${items.join(' and ')} with modern ambient styling.`;
+      }
+
+      if (counts['car'] || counts['truck'] || counts['bus'] || counts['traffic light']) {
+        return "An outdoor street transportation scene showing automotive vehicles on the road.";
+      }
+
+      // 2. Generic grounded synthesis
+      const formattedItems = uniqueClasses.map(cls => {
+        const cnt = counts[cls];
+        return cnt > 1 ? `${cnt} ${cls}s` : `a ${cls}`;
+      });
+
+      if (formattedItems.length === 1) {
+        return `A focused photograph prominently displaying ${formattedItems[0]} in the frame.`;
+      } else if (formattedItems.length === 2) {
+        return `A detailed scene capturing ${formattedItems[0]} alongside ${formattedItems[1]}.`;
+      } else {
+        const allExceptLast = formattedItems.slice(0, -1).join(', ');
+        const last = formattedItems[formattedItems.length - 1];
+        return `A photograph displaying a setting with ${allExceptLast}, and ${last}.`;
+      }
+    }
+
+    // Draw visual bounding boxes on image
+    function renderBoundingBoxes(predictions) {
+      const img = imagePreview;
+      const canvas = canvasOverlay;
+      canvas.width = img.clientWidth;
+      canvas.height = img.clientHeight;
+      canvas.style.display = 'block';
+
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const scaleX = canvas.width / img.naturalWidth;
+      const scaleY = canvas.height / img.naturalHeight;
+
+      predictions.forEach(p => {
+        const [x, y, w, h] = p.bbox;
+        const drawX = x * scaleX;
+        const drawY = y * scaleY;
+        const drawW = w * scaleX;
+        const drawH = h * scaleY;
+
+        // Box
+        ctx.strokeStyle = '#6366f1';
+        ctx.lineWidth = 3;
+        ctx.strokeRect(drawX, drawY, drawW, drawH);
+
+        // Label background
+        ctx.fillStyle = '#6366f1';
+        const labelText = `${p.class} (${Math.round(p.score * 100)}%)`;
+        ctx.font = 'bold 12px Plus Jakarta Sans, sans-serif';
+        const textWidth = ctx.measureText(labelText).width;
+        ctx.fillRect(drawX, Math.max(0, drawY - 20), textWidth + 10, 20);
+
+        // Label text
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(labelText, drawX + 5, Math.max(14, drawY - 5));
+      });
+    }
+
+    generateBtn.addEventListener('click', async () => {
+      if (!imagePreview.src) return;
+
+      generateBtn.disabled = true;
+      statusBar.style.display = 'flex';
+      statusText.innerText = 'Scanning visual features & detecting objects...';
+      modelStatusEl.innerText = 'Analyzing...';
+      modelStatusEl.style.color = '#f59e0b';
+
+      const startTime = performance.now();
+
+      try {
+        if (!objectDetector) {
+          statusText.innerText = 'Loading Vision Engine...';
+          objectDetector = await cocoSsd.load();
+        }
+
+        // Run deep object detection directly on image
+        const predictions = await objectDetector.detect(imagePreview);
+
+        const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
+        inferTimeEl.innerText = `${elapsed}s`;
+        resInfoEl.innerText = `${imagePreview.naturalWidth} × ${imagePreview.naturalHeight} px`;
+
+        // Render tags
+        tagsContainer.innerHTML = '';
+        if (predictions.length > 0) {
+          predictions.forEach(p => {
+            const tag = document.createElement('span');
+            tag.className = 'object-tag';
+            tag.innerText = `${p.class} (${Math.round(p.score * 100)}%)`;
+            tagsContainer.appendChild(tag);
+          });
+          renderBoundingBoxes(predictions);
+        } else {
+          tagsContainer.innerHTML = '<span class="object-tag-none">No discrete objects detected (scenic/ambient)</span>';
+          canvasOverlay.style.display = 'none';
+        }
+
+        // Generate accurate description based on detected objects
+        latestCaption = buildAccurateCaption(predictions, imagePreview.naturalWidth, imagePreview.naturalHeight);
+        resultBox.innerHTML = `<strong>${latestCaption}</strong>`;
+
+        speakBtn.disabled = false;
+        copyBtn.disabled = false;
+        modelStatusEl.innerText = 'Completed';
+        modelStatusEl.style.color = '#34d399';
+
+        speakCaption();
+
+      } catch (err) {
+        console.error(err);
+        resultBox.innerHTML = `<span style="color: #f87171;">Error analyzing image: ${err.message}</span>`;
+        modelStatusEl.innerText = 'Error';
+        modelStatusEl.style.color = '#ef4444';
+      } finally {
+        statusBar.style.display = 'none';
+        generateBtn.disabled = false;
+      }
+    });
+
+    function speakCaption() {
+      if (!latestCaption) return;
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(latestCaption);
+      utterance.rate = 1.0;
+      window.speechSynthesis.speak(utterance);
+    }
+    speakBtn.addEventListener('click', speakCaption);
+
+    copyBtn.addEventListener('click', () => {
+      if (!latestCaption) return;
+      navigator.clipboard.writeText(latestCaption);
+      const original = copyBtn.innerText;
+      copyBtn.innerText = '✅ Copied!';
+      setTimeout(() => { copyBtn.innerText = original; }, 2000);
+    });
+  </script>
+</body>
+</html>

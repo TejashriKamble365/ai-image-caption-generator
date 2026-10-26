@@ -1,0 +1,6 @@
+torch
+torchvision
+transformers
+gradio>=4.20.0
+pillow
+gTTS
